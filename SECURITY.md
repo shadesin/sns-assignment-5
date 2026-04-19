@@ -37,20 +37,78 @@ INSERT INTO users VALUES('hacker','hack123');
 
 These changes are verified in phpMyAdmin with BEFORE and AFTER screenshots.
 
-## 4. How Fixes Prevent Attacks
+## 4. How Each Attack Is Prevented in the Secure App
 
-The secure app prevents SQL injection using:
+The secure app blocks all demonstrated attacks primarily through prepared statements, plus password hashing, validation, and safer error handling.
 
-1. Prepared statements:
-   SQL code and user data are separated, so injected strings are treated only as data.
+### 4.1 Authentication Bypass
 
-2. Password hashing:
-   Passwords are stored using `password_hash()` and verified with `password_verify()`. Plain-text passwords are not stored in the secure table.
+Typical payload:
 
-3. Input validation:
-   Username format, length, and required fields are validated.
+```sql
+admin' --
+```
 
-4. Error handling:
-   SQL errors are not displayed to users, reducing information leakage.
+How it is prevented:
 
-Together, these controls make bypass, union extraction, blind condition attacks, and database modification payloads fail in the secure app.
+- The login query is parameterized (prepared statement with bound parameters), so the input is never merged into SQL syntax.
+- The payload is treated as a literal username string, not as SQL control text.
+- Result: query logic is not changed, so bypass does not happen.
+
+### 4.2 Union-Based Injection
+
+Typical payload:
+
+```sql
+' UNION SELECT username, password FROM users --
+```
+
+How it is prevented:
+
+- In a prepared statement, UNION text in input cannot be executed as part of the SQL command.
+- The database receives one fixed query shape and one username value.
+- Result: no extra rows are appended and credentials are not leaked.
+
+### 4.3 Blind SQL Injection
+
+Typical payload:
+
+```sql
+admin' AND SUBSTRING(password,1,1)='a' --
+```
+
+How it is prevented:
+
+- Conditional SQL fragments from input are not parsed as query logic when parameters are used.
+- The true/false probing behavior is removed because the condition is never executed by the SQL engine.
+- Result: attacker cannot infer password characters from response differences.
+
+### 4.4 Database Modification Attack (UPDATE / INSERT)
+
+Typical payloads:
+
+```sql
+admin' OR '1'='1'; UPDATE users SET password='pwned123' WHERE username='admin'; --
+```
+
+```sql
+x' OR '1'='1'; INSERT INTO users VALUES('hacker','hack123'); --
+```
+
+How it is prevented:
+
+- In this implementation, username validation blocks this payload early: input length is capped (50 chars) and only `[a-zA-Z0-9_]` is accepted, so characters like `'`, `;`, and spaces are rejected.
+- Even without that validation layer, prepared statements separate SQL structure from user input, so injected UPDATE/INSERT text is treated as data, not executable SQL.
+- The authentication flow runs a fixed SELECT-only operation for login; it does not execute user-provided write queries.
+- Result: attacker input cannot modify table contents through the login form.
+
+## 5. Supporting Security Controls
+
+1. Password hashing:
+   Passwords in `users_secure` are stored as hashes via `password_hash()` and checked with `password_verify()`. Even if data is exposed, plaintext passwords are not directly revealed.
+
+2. Input validation:
+   Required fields, username format restrictions, and length caps block many malicious payloads before query execution.
+
+3. Error handling:
+   Detailed SQL errors are not shown to users, reducing feedback useful for attack refinement.
